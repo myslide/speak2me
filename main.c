@@ -1,7 +1,7 @@
 /******************************************************************************
  * File Name: main.c
  * author:mysli
- * version 20230215
+ * version 20230221
  *
  * Description: This is the source code for the PSoC 4 CapSense CSD Touchpad
  * controlled MP3 player for ModusToolbox.
