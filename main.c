@@ -57,10 +57,38 @@
 #define CAPSENSE_INTR_PRIORITY    (3u)
 #define CY_ASSERT_FAILED          (0u)
 #define GENERALHELPNUMBER       (1u)
+/** Pin state for the Available button light LEDS on/Off. */
+#define LEDS_STATE_ON          (1U)
+#define LEDS_STATE_OFF         (0U)
+
+/*****************************************************************************
+ * Macros 4 WDT
+ *****************************************************************************/
+/* WDT demo options */
+/* Select WDT_DEMO as either WDT_RESET_DEMO or WDT_INTERRUPT_DEMO */
+#define WDT_RESET_DEMO             (1U)
+#define WDT_INTERRUPT_DEMO         (2U)
+#define WDT_DEMO                   (WDT_INTERRUPT_DEMO)
+
+/* WDC Interrupt flag states */
+#define WDC_INTERRUPT_FLAG_CLEAR    0
+#define WDC_INTERRUPT_FLAG_SET      1
+
+/* ILO Compensation flag states */
+#define ILO_COMP_FLAG_CLEAR         0
+#define ILO_COMP_FLAG_SET           1
+
+/* Define COUNTER0 delay in microseconds */
+#define COUNTER0_DELAY_US           (250 * 1000)
+
+/* LED states */
+/* Note: the LED states are inverted for the CY8CKIT-149 kit. */
+#define LED_STATE_ON               (0U)
+#define LED_STATE_OFF              (1U)
+
 /*******************************************************************************
  * Global Definitions
  *******************************************************************************/
-cy_stc_scb_ezi2c_context_t ezi2c_context;
 
 #if CY_CAPSENSE_BIST_EN
 /* Variables to hold sensor parasitic capacitances */
@@ -69,10 +97,30 @@ cy_en_capsense_bist_status_t status;
 #endif /* CY_CAPSENSE_BIST_EN */
 
 /*******************************************************************************
+ * Global Variables
+ ********************************************************************************/
+/* WDC Interrupt flag */
+volatile uint32_t interrupt_flag = 0;
+
+/*******************************************************************************
  * Function Prototypes
  *******************************************************************************/
 static void initialize_capsense(void);
 static void capsense_isr(void);
+
+/*****************************************************************************
+ * Function Prototypes
+ *****************************************************************************/
+/* WDT initialization function */
+void wdt_init(void);
+/* WDT interrupt service routine */
+void wdt_isr(void);
+
+void wdc_interrupt_handler(void);
+
+/*****************************************************************************
+ * Global Variables
+ *****************************************************************************/
 
 static volatile bool isPlayGeneralHelp = false;
 void sayGlobalDeviceHelp() {
@@ -88,7 +136,7 @@ void sayGlobalDeviceHelp() {
 }
 static void sayMemoryHelp(int helpnumber) {
 
-	delay(500);//suppress double calls from a interrupts
+	delay(500); //suppress double calls from a interrupts
 	if (Cy_GPIO_Read(CYBSP_MP3BUSY_PORT, CYBSP_MP3BUSY_PIN) != 0) {
 		dfp_play(helpnumber);
 		delay(100);
@@ -97,6 +145,67 @@ static void sayMemoryHelp(int helpnumber) {
 		//delay(300);
 	}
 
+}
+/*******************************************************************************
+ * Function Name: wdc_interrupt_handler
+ ********************************************************************************
+ * Summary:
+ * The wdc inetrrupt handler function handles the WDC interrupt. The interrupt
+ * flag is set depending on the interrupt status and counter mask. The flag is
+ * set to perform ILO compensation in case of counter 0.
+ *
+ *******************************************************************************/
+void wdc_interrupt_handler(void) {
+	uint32_t status = Cy_WDC_GetInterruptStatus(WCO);
+
+	if ((status & CY_WDC_COUNTER1_Msk) != 0) {
+		//disable next line if Counter3 is enabled above
+		interrupt_flag = WDC_INTERRUPT_FLAG_SET;
+	}
+	//enable it for adding Counter 3 are cascaded in the setup
+//	if ((status & CY_WDC_COUNTER2_Msk) != 0) {
+//		/* Set the WDC interrupt flag */
+//		interrupt_flag = WDC_INTERRUPT_FLAG_SET;
+//	}
+	Cy_WDC_ClearInterrupt(WCO,
+			CY_WDC_COUNTER0_Msk | CY_WDC_COUNTER1_Msk/*to use 3 Counters: CY_WDC_COUNTERS_Msk*/);
+}
+
+void wdc_init_Interrupt() {
+
+	cy_en_wdc_status_t wdc_Status;
+	/* Setup the WDC interrupt */
+	(void) Cy_SysInt_SetVector(CYBSP_WDC_IRQ, wdc_interrupt_handler);
+	NVIC_EnableIRQ(CYBSP_WDC_IRQ);
+
+	/* Initialize WDC */
+	wdc_Status = Cy_WDC_Init(CYBSP_WDC_HW, &CYBSP_WDC_config);
+	if (wdc_Status != CY_RSLT_SUCCESS) {
+		CY_ASSERT(0);
+	}
+
+	/* Enable WDC Counters */
+	Cy_WDC_Enable(CYBSP_WDC_HW,
+			CY_WDC_COUNTER0_Msk | CY_WDC_COUNTER1_Msk/*to use 3 Counters: CY_WDC_COUNTERS_Msk*/,
+			CY_WDC_CLK_ILO_3CYCLES_US);
+}
+/*
+ * The "Thread" to keep the memory buttons light on for rd. 30s
+ */
+static void enlightTheButtons() {
+	Cy_GPIO_Write(LEDS_PORT, LEDS_NUM, LEDS_STATE_ON);
+	wdc_init_Interrupt();
+	Cy_GPIO_Write(CYBSP_LED_RGB_RED_PORT,
+	CYBSP_LED_RGB_RED_NUM,
+	CYBSP_LED_STATE_ON);
+}
+
+static void lightOffTheButtons() {
+	if (interrupt_flag == WDC_INTERRUPT_FLAG_SET) {
+		Cy_GPIO_Write(LEDS_PORT, LEDS_NUM, LEDS_STATE_OFF);
+		/* Clear the interrupt flag */
+		interrupt_flag = WDC_INTERRUPT_FLAG_CLEAR;
+	}
 }
 
 /*******************************************************************************
@@ -121,6 +230,9 @@ int main(void) {
 	/* Initialize the device and board peripherals */
 	result = cybsp_init();
 
+	uint32_t ilo_compensated_counts = 0U;
+	uint32_t temp_ilo_counts = 0u;
+
 	/* Board init failed. Stop program execution */
 	if (result != CY_RSLT_SUCCESS) {
 		CY_ASSERT(CY_ASSERT_FAILED);
@@ -137,6 +249,8 @@ int main(void) {
 	if (initstatus != CY_SCB_UART_SUCCESS) {
 		handle_error();
 	}
+//	/* Starts the ILO accuracy/Trim measurement */
+//	Cy_SysClk_IloStartMeasurement();
 
 	Cy_GPIO_Write(CYBSP_LED_RGB_RED_PORT, CYBSP_LED_RGB_RED_NUM,
 	CYBSP_LED_STATE_ON);
@@ -147,15 +261,16 @@ int main(void) {
 	Cy_CapSense_ScanAllWidgets(&cy_capsense_context);
 	dfp_volume(25);
 
-	cy_capsense_status_t status;
 	for (;;) {
+		lightOffTheButtons();
+
 		if (CY_CAPSENSE_NOT_BUSY == Cy_CapSense_IsBusy(&cy_capsense_context)) {
 			/* Process all widgets */
 			Cy_CapSense_ProcessAllWidgets(&cy_capsense_context);
 
 			if (0 != Cy_CapSense_IsWidgetActive(
 			CY_CAPSENSE_TOUCHPAD0_WDGT_ID, &cy_capsense_context)) {
-				if(isPlayGeneralHelp){
+				if (isPlayGeneralHelp) {
 					dfp_stop();
 					isPlayGeneralHelp = false;
 				}
@@ -199,10 +314,9 @@ int main(void) {
 //					if (0 == Cy_CapSense_IsWidgetActive(
 //					CY_CAPSENSE_TOUCHPAD0_WDGT_ID, &cy_capsense_context)) {
 
-					Cy_GPIO_Write(CYBSP_LED_RGB_RED_PORT,
-					CYBSP_LED_RGB_RED_NUM,
-					CYBSP_LED_STATE_ON);
+					enlightTheButtons();
 					sayGlobalDeviceHelp();
+
 					Cy_GPIO_Write(CYBSP_LED_RGB_RED_PORT,
 					CYBSP_LED_RGB_RED_NUM,
 					CYBSP_LED_STATE_OFF);
@@ -279,6 +393,7 @@ static void capsense_isr(void) {
 				CY_CAPSENSE_BUTTON0_SNS0_ID, &sensor_cp, &cy_capsense_context);
 	}
 #endif /* CY_CAPSENSE_BIST_EN */
+
 /*******************************************************************************
  * Function Name: handle_error
  ********************************************************************************
