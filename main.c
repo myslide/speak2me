@@ -1,7 +1,7 @@
 /******************************************************************************
  * File Name: main.c
  * author:mysli
- * version 20230225
+ * version 20230224
  *
  * Used PINS of CY8CKIT-041-41XX:
  *
