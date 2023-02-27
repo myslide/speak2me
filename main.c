@@ -1,12 +1,12 @@
 /******************************************************************************
  * File Name: main.c
  * author:mysli
- * version 20230224
+ * version 20230227
  *
  * Used PINS of CY8CKIT-041-41XX:
  *
- * RINGINDICATOR - P0_2, D7@J4, DigitalIn
- * HANDSET_SWITCH_PORT  - P0_7, 12@J2, DigitalIn
+ * RINGDETECTOR - P0_2, D7@J4, DigitalIn
+ * SWITCHHOOK   - P0_7, 12@J2, DigitalIn
  * RELAY - P2_7,D9@J4 ,DigitalOut
  * MP3BUSY - P2_5,A5@J2 ,DigitalIn
  * CYBSP_DEBUG_UART_TX - P0_5,D1@J4 ,DigitalOut,UART
@@ -59,6 +59,7 @@
 #include "cycfg.h"
 #include "cycfg_capsense.h"
 #include "DFPlayer.h"
+#include "utils.h"
 #include <stdbool.h>
 
 /*******************************************************************************
@@ -67,9 +68,7 @@
 #define CAPSENSE_INTR_PRIORITY    (3u)
 #define CY_ASSERT_FAILED          (0u)
 #define GENERALHELPNUMBER       (1u)
-/** Pin state for the Available button light LEDS on/Off. */
-#define LEDS_STATE_ON          (1U)
-#define LEDS_STATE_OFF         (0U)
+
 
 /*****************************************************************************
  * Macros 4 WDT
@@ -91,10 +90,7 @@
 /* Define COUNTER0 delay in microseconds */
 #define COUNTER0_DELAY_US           (250 * 1000)
 
-/* LED states */
-/* Note: the LED states are inverted for the CY8CKIT-149 kit. */
-#define LED_STATE_ON               (0U)
-#define LED_STATE_OFF              (1U)
+
 /*****************************************************************************
  * Macros 4 Handset switch
  *****************************************************************************/
@@ -137,14 +133,10 @@ static void capsense_isr(void);
 void switch_ISR();
 void initPhone();
 
-/*****************************************************************************
- * Function Prototypes
- *****************************************************************************/
 /* WDT initialization function */
 void wdt_init(void);
 /* WDT interrupt service routine */
 void wdt_isr(void);
-
 void wdc_interrupt_handler(void);
 
 /*****************************************************************************
@@ -179,23 +171,10 @@ static void sayMemoryHelp(int helpnumber) {
 /******************************************************************************
  * Switch interrupt configuration structure
  *****************************************************************************/
-const cy_stc_sysint_t switch_intr_config = { .intrSrc = HANDSET_SWITCH_IRQ, /* Source of interrupt signal */
+const cy_stc_sysint_t switch_intr_config = { .intrSrc = SWITCHHOOK_IRQ, /* Source of interrupt signal */
 .intrPriority = SWITCH_INTR_PRIORITY /* Interrupt priority */
 };
 
-void blinkGreen() {
-	Cy_GPIO_Write(CYBSP_LED_BTN1_PORT, CYBSP_LED_BTN1_NUM,
-	CYBSP_LED_STATE_ON);
-	delay(500);
-	Cy_GPIO_Write(CYBSP_LED_BTN1_PORT, CYBSP_LED_BTN1_NUM,
-	CYBSP_LED_STATE_OFF);
-	delay(500);
-	Cy_GPIO_Write(CYBSP_LED_BTN1_PORT, CYBSP_LED_BTN1_NUM,
-	CYBSP_LED_STATE_ON);
-	delay(500);
-	Cy_GPIO_Write(CYBSP_LED_BTN1_PORT, CYBSP_LED_BTN1_NUM,
-	CYBSP_LED_STATE_OFF);
-}
 /*******************************************************************************
  * Function Name: Switch_ISR
  ********************************************************************************
@@ -207,11 +186,11 @@ void blinkGreen() {
 void switch_ISR() {
 	/* Clears the triggered pin interrupt */
 
-	isIncoming = Cy_GPIO_Read(RINGINDICATOR_PORT, RINGINDICATOR_NUM);
+	isIncoming = Cy_GPIO_Read(RINGDETECTOR_PORT, RINGDETECTOR_NUM);
 	switch_interrupt_flag = false;
 	if (isIncoming != false) {
 		initPhone();
-		blinkGreen();
+		blinkGreen(6);
 		switch_interrupt_flag = false;
 	} else {
 		/* Set interrupt flag */
@@ -219,22 +198,22 @@ void switch_ISR() {
 		switch_interrupt_flag = true;
 	}
 	//clear IRT it after processing for debounce
-	Cy_GPIO_ClearInterrupt(HANDSET_SWITCH_PORT, HANDSET_SWITCH_NUM);
-		Cy_GPIO_ClearInterrupt(RINGINDICATOR_PORT, RINGINDICATOR_NUM);
-		NVIC_ClearPendingIRQ(switch_intr_config.intrSrc);
+	Cy_GPIO_ClearInterrupt(SWITCHHOOK_PORT, SWITCHHOOK_NUM);
+	Cy_GPIO_ClearInterrupt(RINGDETECTOR_PORT, RINGDETECTOR_NUM);
+	NVIC_ClearPendingIRQ(switch_intr_config.intrSrc);
 }
 
 /**
  * After the PickUp interrupt, switch to listen for the hang up interrupt.
  * switch_interrupt_flag will be set to false
  */
-void toggleHandsetSwitchISRIndicator() {
-	if (CY_GPIO_INTR_RISING == Cy_GPIO_GetInterruptEdge(HANDSET_SWITCH_PORT,
-	HANDSET_SWITCH_NUM)) {
-		Cy_GPIO_SetInterruptEdge(HANDSET_SWITCH_PORT, HANDSET_SWITCH_NUM,
+void toggleSwitchHookISRIndicator() {
+	if (CY_GPIO_INTR_RISING == Cy_GPIO_GetInterruptEdge(SWITCHHOOK_PORT,
+	SWITCHHOOK_NUM)) {
+		Cy_GPIO_SetInterruptEdge(SWITCHHOOK_PORT, SWITCHHOOK_NUM,
 		CY_GPIO_INTR_FALLING);
 	} else {
-		Cy_GPIO_SetInterruptEdge(HANDSET_SWITCH_PORT, HANDSET_SWITCH_NUM,
+		Cy_GPIO_SetInterruptEdge(SWITCHHOOK_PORT, SWITCHHOOK_NUM,
 		CY_GPIO_INTR_RISING);
 	}
 
@@ -289,7 +268,7 @@ void wdc_init_Interrupt() {
  * The "Thread" to keep the memory buttons light on for rd. 30s
  */
 void phoneON() {
-	Cy_GPIO_Write(RELAY_PORT, RELAY_NUM, LEDS_STATE_ON);
+	Cy_GPIO_Write(RELAY_PORT, RELAY_NUM, RELAY_ON);
 	//wdc_init_Interrupt();
 	isPhoneOn = true;
 }
@@ -303,19 +282,20 @@ void initPhone() {
 }
 
 void shutdownPhone() {
-	Cy_GPIO_Write(RELAY_PORT, RELAY_NUM, LEDS_STATE_OFF);
+	dfp_stop();
+	Cy_GPIO_Write(RELAY_PORT, RELAY_NUM, RELAY_OFF);
 	isIncoming = false;
 	isPickedUp = false;
 	isPhoneOn = false;
 }
 static void phoneOFF() {
 	if (interrupt_flag == WDC_INTERRUPT_FLAG_SET) {
-		Cy_GPIO_Write(RELAY_PORT, RELAY_NUM, LEDS_STATE_OFF);
+		Cy_GPIO_Write(RELAY_PORT, RELAY_NUM, RELAY_OFF);
 		/* Clear the interrupt flag */
 		interrupt_flag = WDC_INTERRUPT_FLAG_CLEAR;
 		isPhoneOn = false;
 		//No! maybe handset is not inserted->toggle in switch_ISR() only!
-//		Cy_GPIO_SetInterruptEdge(HANDSET_SWITCH_PORT, HANDSET_SWITCH_NUM,
+//		Cy_GPIO_SetInterruptEdge(SWITCHHOOK_PORT, SWITCHHOOK_NUM,
 //				CY_GPIO_INTR_RISING);
 	}
 }
@@ -368,14 +348,14 @@ int main(void) {
 		CY_ASSERT(0);
 	}
 	/*Ring indicator model L-H trigger*/
-	Cy_GPIO_SetInterruptEdge(RINGINDICATOR_PORT, RINGINDICATOR_NUM,
+	Cy_GPIO_SetInterruptEdge(RINGDETECTOR_PORT, RINGDETECTOR_NUM,
 	CY_GPIO_INTR_RISING);
 	/* Make sure we catch the pick up state at first */
-	Cy_GPIO_SetInterruptEdge(HANDSET_SWITCH_PORT, HANDSET_SWITCH_NUM,
+	Cy_GPIO_SetInterruptEdge(SWITCHHOOK_PORT, SWITCHHOOK_NUM,
 	CY_GPIO_INTR_RISING);
 	/* Set the port 0 glitch filter source  */
-	Cy_GPIO_SetFilter(HANDSET_SWITCH_PORT, HANDSET_SWITCH_NUM);
-	Cy_GPIO_SetFilter(RINGINDICATOR_PORT, RINGINDICATOR_NUM);
+	Cy_GPIO_SetFilter(SWITCHHOOK_PORT, SWITCHHOOK_NUM);
+	Cy_GPIO_SetFilter(RINGDETECTOR_PORT, RINGDETECTOR_NUM);
 	/* Clearing and enabling the GPIO interrupt in NVIC */
 	NVIC_ClearPendingIRQ(switch_intr_config.intrSrc);
 	NVIC_EnableIRQ(switch_intr_config.intrSrc);
@@ -398,9 +378,9 @@ int main(void) {
 			//handset picked up only!
 			delay(20);	//suppress bouncing
 			switch_interrupt_flag = false;
-			isPickedUp = Cy_GPIO_Read(HANDSET_SWITCH_PORT,
-			HANDSET_SWITCH_NUM);
-			toggleHandsetSwitchISRIndicator();//set isPickedUp before further processing
+			isPickedUp = Cy_GPIO_Read(SWITCHHOOK_PORT,
+			SWITCHHOOK_NUM);
+			toggleSwitchHookISRIndicator();//set isPickedUp before further processing
 
 			if ((isPickedUp == true) & (false == isPhoneOn)) {
 				initPhone();
@@ -410,14 +390,14 @@ int main(void) {
 			}
 
 		}
-		if (isIncoming !=false) {
+		if (isIncoming != false) {
 			//ignore the touch supported assisting
 			continue;
 		}
-//		//What is active?Touchpad Cols OR Proximity? Prio the Memory buttons->Cols
-		if (isCSDreleased == true
-				& CY_CAPSENSE_NOT_BUSY
-						== Cy_CapSense_IsBusy(&cy_capsense_context)) {
+//		//What is active?Touchpad Cols OR proximity? Prio the Memory buttons->Cols
+		if ((isCSDreleased == true)
+				& (CY_CAPSENSE_NOT_BUSY
+						== Cy_CapSense_IsBusy(&cy_capsense_context))) {
 			/* Process all widgets */
 			Cy_CapSense_ProcessAllWidgets(&cy_capsense_context);
 
@@ -430,30 +410,33 @@ int main(void) {
 				if (0 != Cy_CapSense_IsSensorActive(
 				CY_CAPSENSE_TOUCHPAD0_WDGT_ID,
 				CY_CAPSENSE_TOUCHPAD0_COL0_ID, &cy_capsense_context)) {
-					Cy_GPIO_Write(CYBSP_LED_BTN1_PORT, CYBSP_LED_BTN1_NUM,
-					CYBSP_LED_STATE_ON);
+					greenLEDOn();
+					if (isPhoneOn == false) {
+						phoneON();
+					}
 					sayMemoryHelp(2);
-					Cy_GPIO_Write(CYBSP_LED_BTN1_PORT, CYBSP_LED_BTN1_NUM,
-					CYBSP_LED_STATE_OFF);
+					greenLEDOff();
 				}
 				if (0 != Cy_CapSense_IsSensorActive(
 				CY_CAPSENSE_TOUCHPAD0_WDGT_ID,
 				CY_CAPSENSE_TOUCHPAD0_COL3_ID, &cy_capsense_context)) {
-					Cy_GPIO_Write(CYBSP_LED_BTN1_PORT, CYBSP_LED_BTN1_NUM,
-					CYBSP_LED_STATE_ON);
+					greenLEDOn();
+					if (isPhoneOn == false) {
+						phoneON();
+					}
 					sayMemoryHelp(3);
-					Cy_GPIO_Write(CYBSP_LED_BTN1_PORT, CYBSP_LED_BTN1_NUM,
-					CYBSP_LED_STATE_OFF);
+					greenLEDOff();
 				}
 
 				if (0 != Cy_CapSense_IsSensorActive(
 				CY_CAPSENSE_TOUCHPAD0_WDGT_ID,
 				CY_CAPSENSE_TOUCHPAD0_COL6_ID, &cy_capsense_context)) {
-					Cy_GPIO_Write(CYBSP_LED_BTN1_PORT, CYBSP_LED_BTN1_NUM,
-					CYBSP_LED_STATE_ON);
+					greenLEDOn();
+					if (isPhoneOn == false) {
+						phoneON();
+					}
 					sayMemoryHelp(4);
-					Cy_GPIO_Write(CYBSP_LED_BTN1_PORT, CYBSP_LED_BTN1_NUM,
-					CYBSP_LED_STATE_OFF);
+					greenLEDOff();
 				}
 			} else {
 				if (0 != Cy_CapSense_IsProximitySensorActive(
@@ -461,7 +444,7 @@ int main(void) {
 				CY_CAPSENSE_PROXIMITY0_SNS0_ID, &cy_capsense_context)) {
 					if (isPhoneOn == false) {
 						initPhone();
-					}else{
+					} else {
 						sayGlobalDeviceHelp();
 					}
 				}
@@ -538,4 +521,4 @@ void handle_error(void) {
 	}
 }
 
-/* [] END OF FILE */
+
