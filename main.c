@@ -3,6 +3,11 @@
  * author:mysli
  * version 20230227
  *
+ *Description: This is the source code for the PSoC 4 CapSense CSD Touchpad
+ * controlled MP3 player for ModusToolbox.
+ *
+ * Related Document: See https://www.hackster.io/myslide/speak2me-bd993e
+ *
  * Used PINS of CY8CKIT-041-41XX:
  *
  * RINGDETECTOR - P0_2, D7@J4, DigitalIn
@@ -13,10 +18,7 @@
  *
  * CYBSP_CSD_COLx
  *
- * Description: This is the source code for the PSoC 4 CapSense CSD Touchpad
- * controlled MP3 player for ModusToolbox.
  *
- * Related Document: See README.md
  *
  *******************************************************************************
  * Copyright 2021-2022, Cypress Semiconductor Corporation (an Infineon company) or
@@ -69,16 +71,9 @@
 #define CY_ASSERT_FAILED          (0u)
 #define GENERALHELPNUMBER       (1u)
 
-
 /*****************************************************************************
  * Macros 4 WDT
  *****************************************************************************/
-/* WDT demo options */
-/* Select WDT_DEMO as either WDT_RESET_DEMO or WDT_INTERRUPT_DEMO */
-#define WDT_RESET_DEMO             (1U)
-#define WDT_INTERRUPT_DEMO         (2U)
-#define WDT_DEMO                   (WDT_INTERRUPT_DEMO)
-
 /* WDC Interrupt flag states */
 #define WDC_INTERRUPT_FLAG_CLEAR    0
 #define WDC_INTERRUPT_FLAG_SET      1
@@ -89,7 +84,6 @@
 
 /* Define COUNTER0 delay in microseconds */
 #define COUNTER0_DELAY_US           (250 * 1000)
-
 
 /*****************************************************************************
  * Macros 4 Handset switch
@@ -216,9 +210,6 @@ void toggleSwitchHookISRIndicator() {
 		Cy_GPIO_SetInterruptEdge(SWITCHHOOK_PORT, SWITCHHOOK_NUM,
 		CY_GPIO_INTR_RISING);
 	}
-
-	//	}
-
 }
 
 /*******************************************************************************
@@ -288,7 +279,8 @@ void shutdownPhone() {
 	isPickedUp = false;
 	isPhoneOn = false;
 }
-static void phoneOFF() {
+
+void phoneOFF() {
 	if (interrupt_flag == WDC_INTERRUPT_FLAG_SET) {
 		Cy_GPIO_Write(RELAY_PORT, RELAY_NUM, RELAY_OFF);
 		/* Clear the interrupt flag */
@@ -322,9 +314,6 @@ int main(void) {
 	/* Initialize the device and board peripherals */
 	result = cybsp_init();
 
-	uint32_t ilo_compensated_counts = 0U;
-	uint32_t temp_ilo_counts = 0u;
-
 	/* Board init failed. Stop program execution */
 	if (result != CY_RSLT_SUCCESS) {
 		CY_ASSERT(CY_ASSERT_FAILED);
@@ -335,8 +324,6 @@ int main(void) {
 	initstatus = dfp_init(SCB1, &CYBSP_UART1_config);
 	/* Initialize CapSense */
 	initialize_capsense();
-
-	cy_stc_capsense_touch_t *touchinfo;
 	/* Initialization failed. Handle error */
 	if (initstatus != CY_SCB_UART_SUCCESS) {
 		handle_error();
@@ -371,25 +358,24 @@ int main(void) {
 	dfp_volume(25);
 
 	for (;;) {
-
-		//phoneOFF();
-
 		if (switch_interrupt_flag == true) {
 			//handset picked up only!
 			delay(20);	//suppress bouncing
 			switch_interrupt_flag = false;
 			isPickedUp = Cy_GPIO_Read(SWITCHHOOK_PORT,
 			SWITCHHOOK_NUM);
-			toggleSwitchHookISRIndicator();//set isPickedUp before further processing
-
+			toggleSwitchHookISRIndicator();	//set isPickedUp before further processing
+			//hang off
 			if ((isPickedUp == true) & (false == isPhoneOn)) {
 				initPhone();
 			}
+			//hang on
 			if ((isPickedUp == false) & (true == isPhoneOn)) {
 				shutdownPhone();
 			}
 
 		}
+		//receive a call
 		if (isIncoming != false) {
 			//ignore the touch supported assisting
 			continue;
@@ -501,24 +487,4 @@ static void initialize_capsense(void) {
 static void capsense_isr(void) {
 	Cy_CapSense_InterruptHandler(CYBSP_CSD_HW, &cy_capsense_context);
 }
-
-/*******************************************************************************
- * Function Name: handle_error
- ********************************************************************************
- * Summary:
- * User defined error handling function.
- *
- *******************************************************************************/
-void handle_error(void) {
-	/* Disable all interrupts */
-	__disable_irq();
-
-	Cy_GPIO_Write(CYBSP_LED_RGB_RED_PORT, CYBSP_LED_RGB_RED_NUM,
-	CYBSP_LED_STATE_ON);
-	/* Switch On error LED */
-
-	while (1) {
-	}
-}
-
 

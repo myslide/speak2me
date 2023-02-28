@@ -26,3 +26,23 @@ void greenLEDOff(){
 						CYBSP_LED_RGB_GREEN_NUM,
 						CYBSP_LED_STATE_OFF);
 }
+
+
+/*******************************************************************************
+ * Function Name: handle_error
+ ********************************************************************************
+ * Summary:
+ * User defined error handling function.
+ *
+ *******************************************************************************/
+void handle_error(void) {
+	/* Disable all interrupts */
+	__disable_irq();
+
+	Cy_GPIO_Write(CYBSP_LED_RGB_RED_PORT, CYBSP_LED_RGB_RED_NUM,
+	CYBSP_LED_STATE_ON);
+	/* Switch On error LED */
+
+	while (1) {
+	}
+}

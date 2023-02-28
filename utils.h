@@ -9,3 +9,5 @@
 void blinkGreen(uint16_t counts);
 void greenLEDOn();
 void greenLEDOff();
+
+void handle_error(void);
