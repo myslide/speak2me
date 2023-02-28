@@ -46,7 +46,7 @@ TARGET=APP_CY8CKIT-041-41XX
 #
 # If APPNAME is edited, ensure to update or regenerate launch
 # configurations for your IDE.
-APPNAME=DFPlayerCapsenseControler
+APPNAME=speak2me
 
 # Name of toolchain to use. Options include:
 #
